@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ODR RRUFF CIF Viewer
  * Description: Reads a CIF and creates the AMC header
- * Version: 1.0.7
+ * Version: 1.0.8
  * Author: Nathan
  */
 
@@ -10,10 +10,17 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'CIF_VIEWER_VERSION', '1.0.7' );
+define( 'CIF_VIEWER_VERSION', '1.0.8' );
 define( 'CIF_VIEWER_URL', plugin_dir_url( __FILE__ ) );
 define( 'CIF_VIEWER_TOKEN_URL', 'https://www.rruff.net/odr_rruff/api/v4/token' );
 define( 'CIF_VIEWER_RECORD_URL', 'https://www.rruff.net/odr_rruff/api/v4/dataset/record/' );
+// The ODR symmetry database the [odr_rruff_symmetry] page lists, and its every
+// record UUID (a limit of 0 returns all of them).
+define( 'CIF_VIEWER_SYMMETRY_DATABASE_UUID', 'e1caf946bba4b04aa57262848214' );
+define( 'CIF_VIEWER_SYMMETRY_LIST_URL', 'https://www.rruff.net/odr_rruff/api/v4/search/database/' . CIF_VIEWER_SYMMETRY_DATABASE_UUID . '/records/0/0.json' );
+// How many records the daily sync fetches: new ones first, then existing ones
+// in turn, so edits in ODR reach the list within about a month.
+define( 'CIF_VIEWER_SYMMETRY_SYNC_BATCH', 25 );
 
 // Where to look for the .env holding the API credentials. It should live above
 // the web root so it can't be downloaded; define CIF_VIEWER_ENV_DIR in
@@ -177,17 +184,18 @@ function cif_viewer_rest_error( $message, $detail, $status ) {
 	return new WP_Error( 'cif_viewer_record', $message, array( 'status' => $status ) );
 }
 
-// Fetches an ODR record server-to-server. The browser can't call the API
-// itself: requests with an Authorization header need a CORS preflight, and the
-// API answers OPTIONS with 405, so the browser reports "Failed to fetch".
-function cif_viewer_rest_record( WP_REST_Request $request ) {
+// GETs an API URL server-to-server and decodes its JSON, or returns a WP_Error.
+// The browser can't call the API itself: requests with an Authorization header
+// need a CORS preflight, and the API answers OPTIONS with 405, so the browser
+// reports "Failed to fetch".
+function cif_viewer_api_get( $url ) {
 	list( $token, $token_source ) = cif_viewer_api_token();
 	if ( '' === $token ) {
 		return cif_viewer_rest_error( 'The server could not get an API token.', cif_viewer_token_error(), 500 );
 	}
 
 	$res = wp_remote_get(
-		CIF_VIEWER_RECORD_URL . rawurlencode( $request['uuid'] ),
+		$url,
 		array(
 			'headers' => array( 'Authorization' => 'Bearer ' . $token ),
 			'timeout' => 20,
@@ -211,6 +219,150 @@ function cif_viewer_rest_record( WP_REST_Request $request ) {
 	if ( null === $data ) {
 		return cif_viewer_rest_error( 'The API returned a record that is not valid JSON.', '', 502 );
 	}
+	return $data;
+}
+
+// Fetches an ODR record for the converter.
+function cif_viewer_rest_record( WP_REST_Request $request ) {
+	$data = cif_viewer_api_get( CIF_VIEWER_RECORD_URL . rawurlencode( $request['uuid'] ) );
+	return is_wp_error( $data ) ? $data : rest_ensure_response( $data );
+}
+
+// --- The symmetry page's data ---
+
+// What the symmetry list shows of one record. Same shape as indexEntry() in
+// scripts/symmetry_index.js.
+function cif_viewer_symmetry_entry( $record ) {
+	$f = array();
+	foreach ( isset( $record['fields'] ) ? $record['fields'] : array() as $field ) {
+		$f[ $field['field_name'] ] = isset( $field['value'] ) ? $field['value'] : '';
+	}
+	$get = function ( $name ) use ( $f ) {
+		return isset( $f[ $name ] ) ? $f[ $name ] : '';
+	};
+	return array(
+		'uuid'       => (string) $record['record_uuid'],
+		'id'         => (int) $get( 'GroupID' ),
+		'name'       => (string) $get( 'SpaceGroupName' ),
+		'number'     => (int) $get( 'SpaceGroupNumber' ),
+		'system'     => (string) $get( 'CrystalSystem' ),
+		'pointGroup' => (string) $get( 'PointGroup' ),
+		'lattice'    => (string) $get( 'Lattice' ),
+	);
+}
+
+// The list of every space group: the copy the daily sync keeps in the options
+// table, or the plugin's data/symmetry_index.json (scripts/symmetry_index.js)
+// before the first sync. The API's dataset/<uuid>.json only gives this account
+// 100 records, which is why the list is built up one record at a time.
+function cif_viewer_symmetry_index() {
+	$stored = get_option( 'cif_viewer_symmetry_index' );
+	if ( is_array( $stored ) && ! empty( $stored['groups'] ) ) {
+		return $stored;
+	}
+	$file   = plugin_dir_path( __FILE__ ) . 'data/symmetry_index.json';
+	$seed   = file_exists( $file ) ? json_decode( file_get_contents( $file ), true ) : null;
+	$groups = is_array( $seed ) && isset( $seed['groups'] ) ? $seed['groups'] : array();
+	return array(
+		'groups'   => $groups,
+		'cursor'   => 0,
+		'syncedAt' => 0,
+	);
+}
+
+// The daily sync: one call for every record UUID, then each new record and a
+// batch of existing ones fetched on their own, a second apart. Records no
+// longer in the database drop out of the list.
+function cif_viewer_symmetry_sync() {
+	$list = cif_viewer_api_get( CIF_VIEWER_SYMMETRY_LIST_URL );
+	if ( is_wp_error( $list ) || ! isset( $list['records'] ) ) {
+		return;
+	}
+	$listed = array();
+	foreach ( $list['records'] as $r ) {
+		if ( ! empty( $r['unique_id'] ) ) {
+			$listed[ $r['unique_id'] ] = true;
+		}
+	}
+
+	$index   = cif_viewer_symmetry_index();
+	$entries = array();
+	foreach ( $index['groups'] as $g ) {
+		if ( isset( $listed[ $g['uuid'] ] ) ) {
+			$entries[ $g['uuid'] ] = $g;
+		}
+	}
+	$kept   = array_keys( $entries );
+	$added  = array_slice( array_keys( array_diff_key( $listed, $entries ) ), 0, CIF_VIEWER_SYMMETRY_SYNC_BATCH );
+	$count  = min( count( $kept ), CIF_VIEWER_SYMMETRY_SYNC_BATCH - count( $added ) );
+	$cursor = (int) $index['cursor'];
+	$fetch  = $added;
+	for ( $i = 0; $i < $count; $i++ ) {
+		$fetch[] = $kept[ ( $cursor + $i ) % count( $kept ) ];
+	}
+
+	foreach ( $fetch as $uuid ) {
+		sleep( 1 );
+		$record = cif_viewer_api_get( CIF_VIEWER_RECORD_URL . rawurlencode( $uuid ) );
+		if ( ! is_wp_error( $record ) && isset( $record['database_uuid'] ) && CIF_VIEWER_SYMMETRY_DATABASE_UUID === $record['database_uuid'] ) {
+			$entries[ $uuid ] = cif_viewer_symmetry_entry( $record );
+		}
+	}
+
+	$groups = array_values( $entries );
+	usort(
+		$groups,
+		function ( $a, $b ) {
+			return $a['id'] - $b['id'];
+		}
+	);
+	update_option(
+		'cif_viewer_symmetry_index',
+		array(
+			'groups'   => $groups,
+			'cursor'   => count( $kept ) ? ( $cursor + $count ) % count( $kept ) : 0,
+			'syncedAt' => time(),
+		),
+		false
+	);
+}
+add_action( 'cif_viewer_symmetry_sync', 'cif_viewer_symmetry_sync' );
+
+// Scheduled here rather than only on activation, since updating the plugin
+// doesn't run the activation hook.
+function cif_viewer_schedule_symmetry_sync() {
+	if ( ! wp_next_scheduled( 'cif_viewer_symmetry_sync' ) ) {
+		wp_schedule_event( time() + HOUR_IN_SECONDS, 'daily', 'cif_viewer_symmetry_sync' );
+	}
+}
+add_action( 'init', 'cif_viewer_schedule_symmetry_sync' );
+
+function cif_viewer_unschedule_symmetry_sync() {
+	wp_clear_scheduled_hook( 'cif_viewer_symmetry_sync' );
+}
+register_deactivation_hook( __FILE__, 'cif_viewer_unschedule_symmetry_sync' );
+
+function cif_viewer_rest_symmetry_index() {
+	$index = cif_viewer_symmetry_index();
+	return rest_ensure_response( array( 'groups' => $index['groups'] ) );
+}
+
+// One symmetry record, cached for 12 hours. Only records of the symmetry
+// database are passed on.
+function cif_viewer_rest_symmetry_record( WP_REST_Request $request ) {
+	$uuid      = $request['uuid'];
+	$cache_key = 'cif_viewer_symmetry_' . md5( $uuid );
+	$data      = get_transient( $cache_key );
+	if ( false === $data ) {
+		$data = cif_viewer_api_get( CIF_VIEWER_RECORD_URL . rawurlencode( $uuid ) );
+		if ( is_wp_error( $data ) ) {
+			return $data;
+		}
+		if ( ! isset( $data['database_uuid'] ) || CIF_VIEWER_SYMMETRY_DATABASE_UUID !== $data['database_uuid'] ) {
+			return cif_viewer_rest_error( 'That record is not in the symmetry database.', '', 404 );
+		}
+		set_transient( $cache_key, $data, 12 * HOUR_IN_SECONDS );
+	}
 	return rest_ensure_response( $data );
 }
 
@@ -223,6 +375,24 @@ function cif_viewer_register_rest_routes() {
 			'callback'            => 'cif_viewer_rest_record',
 			// Public like the viewer page itself; the uuid pattern keeps it to
 			// record lookups only.
+			'permission_callback' => '__return_true',
+		)
+	);
+	register_rest_route(
+		'odr-rruff-cifviewer/v1',
+		'/symmetry',
+		array(
+			'methods'             => 'GET',
+			'callback'            => 'cif_viewer_rest_symmetry_index',
+			'permission_callback' => '__return_true',
+		)
+	);
+	register_rest_route(
+		'odr-rruff-cifviewer/v1',
+		'/symmetry/record/(?P<uuid>[0-9a-fA-F]{1,64})',
+		array(
+			'methods'             => 'GET',
+			'callback'            => 'cif_viewer_rest_symmetry_record',
 			'permission_callback' => '__return_true',
 		)
 	);
@@ -288,6 +458,8 @@ function cif_viewer_register_assets() {
 	wp_register_script( 'cif-viewer-amc2cif-ui', CIF_VIEWER_URL . 'assets/amc2cif-ui.js', array( 'cif-viewer-app', 'cif-viewer-amc2cif' ), cif_viewer_asset_version( 'assets/amc2cif-ui.js' ), true );
 	wp_register_style( 'cif-viewer-metrics', CIF_VIEWER_URL . 'assets/metrics.css', array( 'cif-viewer-style' ), cif_viewer_asset_version( 'assets/metrics.css' ) );
 	wp_register_script( 'cif-viewer-metrics', CIF_VIEWER_URL . 'assets/metrics-page.js', array( 'cif-viewer-app' ), cif_viewer_asset_version( 'assets/metrics-page.js' ), true );
+	wp_register_style( 'cif-viewer-symmetry-page', CIF_VIEWER_URL . 'assets/symmetry.css', array( 'cif-viewer-style' ), cif_viewer_asset_version( 'assets/symmetry.css' ) );
+	wp_register_script( 'cif-viewer-symmetry-page', CIF_VIEWER_URL . 'assets/symmetry-page.js', array(), cif_viewer_asset_version( 'assets/symmetry-page.js' ), true );
 }
 add_action( 'wp_enqueue_scripts', 'cif_viewer_register_assets' );
 
@@ -420,3 +592,22 @@ function cif_viewer_shortcode() {
 	return ob_get_clean();
 }
 add_shortcode( 'odr_rruff_cifviewer', 'cif_viewer_shortcode' );
+
+// The symmetry page: every space group, or with ?UUID=<record uuid> one group's
+// symmetry operators (assets/symmetry-page.js fills it in).
+function cif_viewer_symmetry_shortcode() {
+	wp_enqueue_style( 'cif-viewer-style' );
+	wp_enqueue_style( 'cif-viewer-symmetry-page' );
+	wp_enqueue_script( 'cif-viewer-symmetry-page' );
+	wp_localize_script(
+		'cif-viewer-symmetry-page',
+		'odrRruffSymmetry',
+		array(
+			'indexUrl'  => rest_url( 'odr-rruff-cifviewer/v1/symmetry' ),
+			'recordUrl' => rest_url( 'odr-rruff-cifviewer/v1/symmetry/record/' ),
+			'restNonce' => wp_create_nonce( 'wp_rest' ),
+		)
+	);
+	return '<div class="cif-viewer-app"><div id="symmetryView"></div></div>';
+}
+add_shortcode( 'odr_rruff_symmetry', 'cif_viewer_symmetry_shortcode' );
