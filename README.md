@@ -105,3 +105,36 @@ node scripts/metrics.js path/to/amc path/to/cif > data/metrics.json
   (`wp-content/plugins/odr-rruff-cifviewer/data/metrics.json`).
 
 The file isn't committed. Without it, the view asks you to choose it.
+
+## Symmetry page
+
+A separate page listing every space group in the ODR symmetry database, under
+headers for crystal system and point group, one row per space group number.
+Monoclinic rows are split by unique axis (`:1` c, `:2` b, `:3` a) and
+rhombohedral ones by hexagonal or rhombohedral axes (`:4`, `:5`). Each symbol
+links to the same page with `?UUID=<record uuid>`, which shows that group's
+generators, symmetry operators and reciprocal space operators.
+
+Put this shortcode on its own page:
+
+```
+[odr_rruff_symmetry]
+```
+
+It uses the same `.env` login as the converter.
+
+- **The list** comes from the plugin's `data/symmetry_index.json`, since the
+  API only gives this account 100 records per dataset fetch. A daily WordPress
+  task keeps it in step with ODR: it fetches every record UUID, adds new
+  records, drops deleted ones, and re-reads 25 existing records a day so edits
+  in ODR reach the list within about a month. To rebuild the file from scratch
+  (after `node scripts/symmetry_upload.js --check` refreshes
+  `data/symmetry_all_records.json`):
+
+  ```bash
+  node scripts/symmetry_index.js
+  ```
+
+- **A group's page** reads its record live from ODR, cached for 12 hours.
+- **Standalone:** `node server.js`, then open
+  `http://localhost:8000/symmetry.html/`.

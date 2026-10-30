@@ -1,0 +1,224 @@
+/* The symmetry page. Everything is under #symmetryView so it can sit inside a WordPress theme;
+   the colours come from the standalone page's variables or the plugin's (--cifv-*). */
+#symmetryView {
+  --s-bg: var(--cifv-bg, var(--bg, #ffffff));
+  --s-panel-bg: var(--cifv-panel-bg, var(--panel-bg, #fafafa));
+  --s-border: var(--cifv-border, var(--border, #cccccc));
+  --s-muted: #555555;
+  --s-accent: #2b6cb0;
+  --s-error: #b42318;
+}
+
+#symmetryView h1 {
+  text-align: center;
+}
+
+#symmetryView .sg-status {
+  text-align: center;
+  color: var(--s-muted);
+}
+
+#symmetryView .sg-error {
+  color: var(--s-error);
+}
+
+#symmetryView .sg-intro {
+  color: var(--s-muted);
+  max-width: 46rem;
+  margin: 0 auto 1rem;
+  text-align: center;
+}
+
+#symmetryView .sg-nav {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.4rem 1rem;
+  margin-bottom: 1.25rem;
+}
+
+#symmetryView a {
+  color: var(--s-accent);
+  text-decoration: none;
+}
+
+#symmetryView a:hover {
+  text-decoration: underline;
+}
+
+#symmetryView .sg-system,
+#symmetryView .sg-ops,
+#symmetryView .sg-others {
+  background: var(--s-panel-bg);
+  border-radius: 20px;
+  padding: 1rem 1.5rem 1.25rem;
+  margin-bottom: 1rem;
+}
+
+#symmetryView h2 {
+  font-size: 1.25rem;
+  margin: 0.25rem 0 0.5rem;
+}
+
+#symmetryView h3 {
+  font-size: 1rem;
+  margin: 1rem 0 0.25rem;
+  padding-bottom: 0.2rem;
+  border-bottom: 1px solid var(--s-border);
+}
+
+#symmetryView .sg-range {
+  font-size: 0.85rem;
+  font-weight: normal;
+  color: var(--s-muted);
+  margin-left: 0.4rem;
+}
+
+/* Overbar for -1, -3, -4, -6 */
+#symmetryView .sg-bar {
+  text-decoration: overline;
+}
+
+#symmetryView sub {
+  font-size: 0.75em;
+}
+
+/* One row per space group number, the symbols lined up in columns. */
+#symmetryView .sg-rows {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+#symmetryView .sg-rows th {
+  width: 2.5rem;
+  text-align: left;
+  vertical-align: top;
+  padding: 0.25rem 0.5rem 0.25rem 0;
+}
+
+#symmetryView .sg-rows td {
+  padding: 0.15rem 0;
+}
+
+#symmetryView .sg-rows tr:target {
+  background: var(--s-bg);
+  outline: 1px solid var(--s-accent);
+}
+
+#symmetryView .sg-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  padding: 0.1rem 0;
+}
+
+#symmetryView .sg-setting {
+  flex: 0 0 2.5rem;
+  font-size: 0.8rem;
+  color: var(--s-muted);
+}
+
+#symmetryView .sg-symbols {
+  display: flex;
+  flex-wrap: wrap;
+  flex: 1;
+  gap: 0.15rem 0;
+}
+
+#symmetryView .sg-link {
+  display: inline-block;
+  min-width: 5.5rem;
+  padding-right: 0.5rem;
+}
+
+#symmetryView .sg-shift {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--s-muted);
+}
+
+/* The detail page */
+#symmetryView .sg-back {
+  margin-bottom: 0.5rem;
+}
+
+#symmetryView .sg-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.2rem 1rem;
+  max-width: 30rem;
+  margin: 0 auto 1.25rem;
+}
+
+#symmetryView .sg-facts dt {
+  color: var(--s-muted);
+}
+
+#symmetryView .sg-facts dd {
+  margin: 0;
+}
+
+#symmetryView .sg-others .sg-link {
+  margin-bottom: 0.3rem;
+}
+
+#symmetryView .sg-op-table {
+  border-collapse: collapse;
+  background: var(--s-bg);
+}
+
+#symmetryView .sg-op-table th,
+#symmetryView .sg-op-table > tbody > tr > td {
+  border: 1px solid var(--s-border);
+  padding: 0.35rem 0.9rem;
+  text-align: center;
+  vertical-align: middle;
+}
+
+#symmetryView .sg-op-table th {
+  background: var(--s-panel-bg);
+}
+
+#symmetryView .sg-op-table .sg-num {
+  color: var(--s-muted);
+}
+
+#symmetryView .sg-op-table .sg-op {
+  font-family: ui-monospace, Consolas, monospace;
+  white-space: nowrap;
+}
+
+/* A matrix in round brackets: the left and right borders of the table, curved. */
+#symmetryView .sg-matrix {
+  display: inline-table;
+  border-collapse: separate;
+  border-spacing: 0;
+  border-left: 1.5px solid currentColor;
+  border-right: 1.5px solid currentColor;
+  border-radius: 10px;
+  padding: 0.1rem 0.35rem;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.85rem;
+}
+
+#symmetryView .sg-matrix td {
+  border: 0;
+  padding: 0 0.4rem;
+  text-align: right;
+}
+
+@media (max-width: 600px) {
+  #symmetryView .sg-system,
+  #symmetryView .sg-ops,
+  #symmetryView .sg-others {
+    padding: 0.75rem;
+  }
+
+  #symmetryView .sg-link {
+    min-width: 5rem;
+  }
+
+  #symmetryView .sg-ops {
+    overflow-x: auto;
+  }
+}
