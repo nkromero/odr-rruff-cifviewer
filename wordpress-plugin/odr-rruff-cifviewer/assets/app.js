@@ -1189,11 +1189,21 @@ async function fetchCifFile(fileUuid) {
   return fetchFromProxy(`${cifViewerConfig.fileProxyUrl}${encodeURIComponent(fileUuid)}`);
 }
 
-async function fetchFromProxy(url) {
+// Sends a CIF to the record's Minimal CIF file and Minimal CIF Contents text (the plugin's
+// admin-only minimal-cif route), as { replaced, fileName, removed, length }.
+async function sendMinimalCif(recordUuid, text) {
+  return fetchFromProxy(cifViewerConfig.minimalCifUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recordUuid, text }),
+  });
+}
+
+async function fetchFromProxy(url, options = {}) {
   // The nonce lets WordPress recognise a logged-in admin, so the route can
   // include the detailed reason when something goes wrong.
-  const headers = cifViewerConfig.restNonce ? { 'X-WP-Nonce': cifViewerConfig.restNonce } : {};
-  const res = await rateLimitedFetch(url, { headers, credentials: 'same-origin' });
+  const headers = { ...options.headers, ...(cifViewerConfig.restNonce ? { 'X-WP-Nonce': cifViewerConfig.restNonce } : {}) };
+  const res = await rateLimitedFetch(url, { ...options, headers, credentials: 'same-origin' });
   if (!res.ok) {
     let message = `Request failed: ${res.status} ${res.statusText}`;
     try {
