@@ -76,15 +76,14 @@ function readEnv() {
   return values;
 }
 
-// Two logins: 'read' (username / password) for looking records up, and 'write'
-// (symmetry_username / symmetry_password), the account allowed to change the database.
-// Each token is cached until a minute before the JWT's own expiry (30 minutes if
-// it doesn't carry one) so each record lookup doesn't log in again.
-const ACCOUNTS = {
-  read: { user: 'username', pass: 'password' },
-  write: { user: 'symmetry_username', pass: 'symmetry_password' },
-};
-const tokens = { read: { token: '', expiry: 0 }, write: { token: '', expiry: 0 } };
+// One API login (username / password) for looking records up and for Send. A server such as
+// zeta that doesn't have that account can use symmetry_username / symmetry_password instead,
+// with ODR_USE_SYMMETRY_LOGIN=1. The token is cached until a minute before the JWT's own
+// expiry (30 minutes if it doesn't carry one) so each record lookup doesn't log in again.
+const LOGIN = process.env.ODR_USE_SYMMETRY_LOGIN === '1'
+  ? { user: 'symmetry_username', pass: 'symmetry_password' }
+  : { user: 'username', pass: 'password' };
+const cached = { token: '', expiry: 0 };
 
 function tokenExpiry(token) {
   try {
@@ -94,15 +93,11 @@ function tokenExpiry(token) {
   return Date.now() + 30 * 60 * 1000;
 }
 
-async function getToken(account = 'read') {
-  // ODR_READ_WITH_WRITE_LOGIN=1 reads with the write login too, for a test server such as zeta
-  // that doesn't have the read account.
-  if (process.env.ODR_READ_WITH_WRITE_LOGIN === '1') account = 'write';
-  const cached = tokens[account];
+async function getToken() {
   if (cached.token && Date.now() < cached.expiry) return cached.token;
 
   const env = readEnv();
-  const { user, pass } = ACCOUNTS[account];
+  const { user, pass } = LOGIN;
   const username = env[user];
   const password = env[pass];
   if (!username || !password) {
@@ -172,8 +167,8 @@ async function fetchCifFile(fileUuid) {
   return JSON.stringify({ text: await fetchApiText(FILE_URL + encodeURIComponent(fileUuid)) });
 }
 
-async function fetchApiJson(url, account) {
-  const text = await fetchApiText(url, {}, account);
+async function fetchApiJson(url) {
+  const text = await fetchApiText(url);
   try {
     JSON.parse(text);
   } catch {
@@ -182,8 +177,8 @@ async function fetchApiJson(url, account) {
   return text;
 }
 
-async function fetchApiText(url, init = {}, account = 'read') {
-  const token = await getToken(account);
+async function fetchApiText(url, init = {}) {
+  const token = await getToken();
   const res = await rateLimited(() => fetch(url, {
     ...init,
     headers: { ...init.headers, Authorization: `Bearer ${token}` },
@@ -192,13 +187,13 @@ async function fetchApiText(url, init = {}, account = 'read') {
   const request = `${init.method || 'GET'} ${new URL(url).pathname.replace(/^.*\/api\/v4/, '')}`;
   if (res.status === 401) {
     // Drop the cached token so the next lookup logs in afresh.
-    tokens[account].token = '';
+    cached.token = '';
     throw Object.assign(new Error(`${request} failed: 401 - the API rejected the token.`), { status: 401 });
   }
   if (res.status === 403) {
     // The login worked but this account may not do this (e.g. no edit rights on the database).
     const detail = (await res.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300);
-    throw Object.assign(new Error(`${request} failed: 403 - the ${ACCOUNTS[account].user} account isn't allowed to do this${detail ? ` (${detail})` : ''}.`), { status: 403 });
+    throw Object.assign(new Error(`${request} failed: 403 - the ${LOGIN.user} account isn't allowed to do this${detail ? ` (${detail})` : ''}.`), { status: 403 });
   }
   if (!res.ok) {
     // ODR's error replies say what was wrong with a write, so keep the start of them.
@@ -225,14 +220,13 @@ async function uploadMinimalCif({ recordUuid, text }) {
     throw Object.assign(new Error('There is no CIF to send.'), { status: 400 });
   }
 
-  // Everything here goes through the write account, which can see what it is about to change.
-  const record = JSON.parse(await fetchApiJson(RECORD_URL + encodeURIComponent(recordUuid), 'write'));
+  const record = JSON.parse(await fetchApiJson(RECORD_URL + encodeURIComponent(recordUuid)));
   const recordField = name => (record.fields || []).find(f => f.field_name === name);
   let template;
   async function findField(name) {
     const field = recordField(name);
     if (field) return field;
-    template = template || JSON.parse(await fetchApiJson(TEMPLATE_URL + encodeURIComponent(record.database_uuid), 'write'));
+    template = template || JSON.parse(await fetchApiJson(TEMPLATE_URL + encodeURIComponent(record.database_uuid)));
     const found = (template.fields || []).find(f => f.name === name);
     if (!found) throw Object.assign(new Error(`That record's database has no ${name} field.`), { status: 400 });
     return { field_uuid: found.field_uuid, template_field_uuid: found.template_field_uuid, files: [] };
@@ -244,17 +238,17 @@ async function uploadMinimalCif({ recordUuid, text }) {
   const fileName = [value('Mineral'), 'minimal', value('database_code_amcsd')].filter(Boolean).join('__') + '.cif';
 
   // The file.
-  const { symmetry_username, user_email } = readEnv();
+  const env = readEnv();
   const form = new FormData();
   form.append('name', fileName);
   form.append('file', new Blob([text], { type: 'chemical/x-cif' }), fileName);
   form.append('dataset_uuid', record.database_uuid);
   form.append('template_field_uuid', fileField.template_field_uuid || '');
-  form.append('user_email', user_email || symmetry_username || '');
+  form.append('user_email', env.user_email || env[LOGIN.user] || '');
   form.append('field_uuid', fileField.field_uuid);
   form.append('record_uuid', recordUuid);
   const oldUuids = new Set((fileField.files || []).map(f => f.file_uuid));
-  let updated = JSON.parse(await fetchApiText(UPLOAD_URL, { method: 'POST', body: form }, 'write'));
+  let updated = JSON.parse(await fetchApiText(UPLOAD_URL, { method: 'POST', body: form }));
   const filesIn = rec => ((rec.fields || []).find(f => f.field_uuid === fileField.field_uuid) || {}).files || [];
   const after = filesIn(updated);
   if (!after.some(f => !oldUuids.has(f.file_uuid))) {
@@ -263,7 +257,7 @@ async function uploadMinimalCif({ recordUuid, text }) {
   let removed = 0;
   for (const old of after.filter(f => oldUuids.has(f.file_uuid))) {
     try {
-      updated = JSON.parse(await fetchApiText(FILE_URL + encodeURIComponent(old.file_uuid), { method: 'DELETE' }, 'write'));
+      updated = JSON.parse(await fetchApiText(FILE_URL + encodeURIComponent(old.file_uuid), { method: 'DELETE' }));
       removed++;
     } catch (err) {
       throw Object.assign(new Error(`The new file was uploaded, but the old minimal CIF (${old.original_name}) could not be deleted: ${err.message}`), { status: err.status || 502 });
@@ -277,7 +271,7 @@ async function uploadMinimalCif({ recordUuid, text }) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ value: text }),
-  }, 'write'));
+  }));
   const stored = ((updated.fields || []).find(f => f.field_uuid === textField.field_uuid) || {}).value;
   const normalize = v => String(v ?? '').replace(/\r\n/g, '\n').trim();
   if (normalize(stored) !== normalize(text)) {
