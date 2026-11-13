@@ -262,3 +262,76 @@
 .cif-viewer-app .drop-zone-file:empty {
   display: none;
 }
+
+/* The "are you sure" box over a dimmed page (confirmOverlay in amc2cif-ui.js). The buttons
+   also carry .cif-viewer-btn, so they keep the theme's sizing; only the colors are set here. */
+.cif-viewer-app .confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.55);
+  animation: cifv-confirm-fade 0.15s ease-out;
+}
+
+.cif-viewer-app .confirm-box {
+  width: 100%;
+  max-width: 440px;
+  padding: 1.5rem 1.75rem 1.25rem;
+  border-radius: 20px;
+  background: var(--cifv-bg);
+  color: var(--cifv-fg);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+  animation: cifv-confirm-pop 0.15s ease-out;
+}
+
+.cif-viewer-app .confirm-box h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1.15rem;
+  line-height: 1.35;
+}
+
+.cif-viewer-app .confirm-box p {
+  margin: 0 0 1.25rem;
+  line-height: 1.5;
+  color: #333333;
+}
+
+.cif-viewer-app .confirm-box code {
+  white-space: nowrap;
+  font-size: 0.9em;
+}
+
+.cif-viewer-app .confirm-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+
+.cif-viewer-app .confirm-buttons .cif-viewer-btn {
+  margin: 0 !important;
+}
+
+.cif-viewer-app .confirm-cancel {
+  border: 1px solid var(--cifv-border);
+  background: var(--cifv-panel-bg);
+  color: var(--cifv-fg);
+}
+
+.cif-viewer-app .confirm-ok {
+  border: 1px solid #2b6cb0;
+  background: #2b6cb0;
+  color: #ffffff;
+}
+
+@keyframes cifv-confirm-fade {
+  from { opacity: 0; }
+}
+
+@keyframes cifv-confirm-pop {
+  from { transform: scale(0.96); opacity: 0; }
+}

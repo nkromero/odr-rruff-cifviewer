@@ -1185,8 +1185,18 @@ async function fetchCifFile(fileUuid) {
   return fetchFromProxy(`api/file/${encodeURIComponent(fileUuid)}`);
 }
 
-async function fetchFromProxy(url) {
-  const res = await rateLimitedFetch(url);
+// Sends a CIF to the record's Minimal CIF file and Minimal CIF Contents text (server.js
+// /api/minimal-cif), as { replaced, fileName, removed, length }.
+async function sendMinimalCif(recordUuid, text) {
+  return fetchFromProxy('api/minimal-cif', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recordUuid, text }),
+  });
+}
+
+async function fetchFromProxy(url, options) {
+  const res = await rateLimitedFetch(url, options);
   if (!res.ok) {
     let message = `Request failed: ${res.status} ${res.statusText}`;
     try {

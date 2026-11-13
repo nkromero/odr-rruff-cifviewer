@@ -272,3 +272,88 @@ button {
 .drop-zone-file:empty {
   display: none;
 }
+
+/* The "are you sure" box over a dimmed page (confirmOverlay in amc2cif-ui.js). */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.55);
+  animation: confirm-fade 0.15s ease-out;
+}
+
+.confirm-box {
+  width: 100%;
+  max-width: 440px;
+  padding: 1.5rem 1.75rem 1.25rem;
+  border-radius: 20px;
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+  animation: confirm-pop 0.15s ease-out;
+}
+
+.confirm-box h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1.15rem;
+  line-height: 1.35;
+}
+
+.confirm-box p {
+  margin: 0 0 1.25rem;
+  line-height: 1.5;
+  color: #333333;
+}
+
+.confirm-box code {
+  white-space: nowrap;
+  font-size: 0.9em;
+}
+
+.confirm-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+
+.confirm-buttons button {
+  margin: 0;
+  padding: 0.45rem 1.1rem;
+  border-radius: 8px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.confirm-cancel {
+  border: 1px solid var(--border);
+  background: var(--panel-bg);
+  color: var(--fg);
+}
+
+.confirm-ok {
+  border: 1px solid #2b6cb0;
+  background: #2b6cb0;
+  color: #ffffff;
+}
+
+.confirm-ok:hover {
+  background: #245a93;
+}
+
+.confirm-buttons button:focus-visible {
+  outline: 2px solid #2b6cb0;
+  outline-offset: 2px;
+}
+
+@keyframes confirm-fade {
+  from { opacity: 0; }
+}
+
+@keyframes confirm-pop {
+  from { transform: scale(0.96); opacity: 0; }
+}
