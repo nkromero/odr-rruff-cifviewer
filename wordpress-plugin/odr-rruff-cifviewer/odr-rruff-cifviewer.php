@@ -2,7 +2,7 @@
 /**
  * Plugin Name: ODR RRUFF CIF Viewer
  * Description: Reads a CIF and creates the AMC header
- * Version: 1.0.13
+ * Version: 1.0.14
  * Author: Nathan
  */
 
@@ -10,7 +10,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'CIF_VIEWER_VERSION', '1.0.13' );
+define( 'CIF_VIEWER_VERSION', '1.0.14' );
 define( 'CIF_VIEWER_URL', plugin_dir_url( __FILE__ ) );
 define( 'CIF_VIEWER_TOKEN_URL', 'https://www.rruff.net/odr_rruff/api/v4/token' );
 define( 'CIF_VIEWER_RECORD_URL', 'https://www.rruff.net/odr_rruff/api/v4/dataset/record/' );
@@ -110,30 +110,24 @@ function cif_viewer_dotenv() {
 
 // Exchanges the .env credentials for an ODR API token server-to-server, so the
 // secret never reaches the browser. The token is cached until shortly before
-// it expires so page views don't each hit the token endpoint. 'read' logs in with
-// username / password; 'write' with symmetry_username / symmetry_password, the
-// account allowed to change the database.
-function cif_viewer_token_cache_key( $account ) {
-	return 'write' === $account ? 'cif_viewer_api_token_cache_write' : 'cif_viewer_api_token_cache';
-}
-
-function cif_viewer_generate_token( $account = 'read' ) {
-	$cached = get_transient( cif_viewer_token_cache_key( $account ) );
+// it expires so page views don't each hit the token endpoint. The same account
+// looks records up and sends minimal CIFs, so it needs edit rights on AMCSD.
+function cif_viewer_generate_token() {
+	$cached = get_transient( 'cif_viewer_api_token_cache' );
 	if ( $cached ) {
 		return $cached;
 	}
 
 	// Same username / password names as the standalone app's .env.
 	$dotenv   = cif_viewer_dotenv();
-	$prefix   = 'write' === $account ? 'symmetry_' : '';
-	$username = isset( $dotenv[ $prefix . 'username' ] ) ? $dotenv[ $prefix . 'username' ] : '';
-	$password = isset( $dotenv[ $prefix . 'password' ] ) ? $dotenv[ $prefix . 'password' ] : '';
+	$username = isset( $dotenv['username'] ) ? $dotenv['username'] : '';
+	$password = isset( $dotenv['password'] ) ? $dotenv['password'] : '';
 	if ( '' === $username || '' === $password ) {
 		$env_file = cif_viewer_env_file();
 		if ( '' === $env_file ) {
 			cif_viewer_token_error( 'no .env file found - put it in one of: ' . implode( ', ', array_map( 'cif_viewer_env_dir_label', cif_viewer_env_dirs() ) ) . ' (not the plugin folder)' );
 		} else {
-			cif_viewer_token_error( 'found ' . $env_file . ' but it has no ' . $prefix . 'username / ' . $prefix . 'password values' );
+			cif_viewer_token_error( 'found ' . $env_file . ' but it has no username / password values' );
 		}
 		return '';
 	}
@@ -175,7 +169,7 @@ function cif_viewer_generate_token( $account = 'read' ) {
 		}
 	}
 	if ( $ttl > 0 ) {
-		set_transient( cif_viewer_token_cache_key( $account ), $token, $ttl );
+		set_transient( 'cif_viewer_api_token_cache', $token, $ttl );
 	}
 
 	return $token;
@@ -183,14 +177,10 @@ function cif_viewer_generate_token( $account = 'read' ) {
 
 // The token from the .env, falling back to the one saved on the settings page.
 // Returns array( token, source ) - source is '.env', 'settings page' or ''.
-// The settings page token is only used for reading.
-function cif_viewer_api_token( $account = 'read' ) {
-	$token = cif_viewer_generate_token( $account );
+function cif_viewer_api_token() {
+	$token = cif_viewer_generate_token();
 	if ( '' !== $token ) {
 		return array( $token, '.env' );
-	}
-	if ( 'write' === $account ) {
-		return array( '', '' );
 	}
 	$token = get_option( 'cif_viewer_api_token', '' );
 	return array( $token, '' === $token ? '' : 'settings page' );
@@ -209,8 +199,8 @@ function cif_viewer_rest_error( $message, $detail, $status ) {
 // The browser can't call the API itself: requests with an Authorization header
 // need a CORS preflight, and the API answers OPTIONS with 405, so the browser
 // reports "Failed to fetch".
-function cif_viewer_api_get( $url, $account = 'read' ) {
-	$body = cif_viewer_api_get_text( $url, $account );
+function cif_viewer_api_get( $url ) {
+	$body = cif_viewer_api_get_text( $url );
 	if ( is_wp_error( $body ) ) {
 		return $body;
 	}
@@ -222,8 +212,8 @@ function cif_viewer_api_get( $url, $account = 'read' ) {
 }
 
 // GETs an API URL server-to-server and returns its body as text, or a WP_Error.
-function cif_viewer_api_get_text( $url, $account = 'read' ) {
-	list( $token, $token_source ) = cif_viewer_api_token( $account );
+function cif_viewer_api_get_text( $url ) {
+	list( $token, $token_source ) = cif_viewer_api_token();
 	if ( '' === $token ) {
 		return cif_viewer_rest_error( 'The server could not get an API token.', cif_viewer_token_error(), 500 );
 	}
@@ -242,7 +232,7 @@ function cif_viewer_api_get_text( $url, $account = 'read' ) {
 	$code = wp_remote_retrieve_response_code( $res );
 	if ( 401 === $code || 403 === $code ) {
 		// Drop the cached token so the next request logs in afresh.
-		delete_transient( cif_viewer_token_cache_key( $account ) );
+		delete_transient( 'cif_viewer_api_token_cache' );
 		return cif_viewer_rest_error( 'Request failed: ' . $code . ' - the API rejected the token.', 'token came from the ' . $token_source, $code );
 	}
 	if ( $code < 200 || $code >= 300 ) {
@@ -448,8 +438,7 @@ function cif_viewer_rest_minimal_cif( WP_REST_Request $request ) {
 		return cif_viewer_rest_error( 'The CIF is too large to send.', '', 413 );
 	}
 
-	// Everything here goes through the write account, which can see what it is about to change.
-	$record = cif_viewer_api_get( CIF_VIEWER_RECORD_URL . rawurlencode( $record_uuid ), 'write' );
+	$record = cif_viewer_api_get( CIF_VIEWER_RECORD_URL . rawurlencode( $record_uuid ) );
 	if ( is_wp_error( $record ) ) {
 		return $record;
 	}
@@ -463,7 +452,7 @@ function cif_viewer_rest_minimal_cif( WP_REST_Request $request ) {
 		return $text_field;
 	}
 
-	list( $token, $token_source ) = cif_viewer_api_token( 'write' );
+	list( $token, $token_source ) = cif_viewer_api_token();
 	if ( '' === $token ) {
 		return cif_viewer_rest_error( 'The server could not get an API token.', cif_viewer_token_error(), 500 );
 	}
@@ -479,7 +468,7 @@ function cif_viewer_rest_minimal_cif( WP_REST_Request $request ) {
 	};
 	$file_name = implode( '__', array_filter( array( $name_part( 'Mineral' ), 'minimal', $name_part( 'database_code_amcsd' ) ) ) ) . '.cif';
 	$dotenv    = cif_viewer_dotenv();
-	$email     = isset( $dotenv['user_email'] ) ? $dotenv['user_email'] : ( isset( $dotenv['symmetry_username'] ) ? $dotenv['symmetry_username'] : '' );
+	$email     = isset( $dotenv['user_email'] ) ? $dotenv['user_email'] : ( isset( $dotenv['username'] ) ? $dotenv['username'] : '' );
 	$form      = array(
 		'name'                => $file_name,
 		'dataset_uuid'        => isset( $record['database_uuid'] ) ? $record['database_uuid'] : '',
@@ -569,7 +558,7 @@ function cif_viewer_minimal_cif_field( $record, $name, &$template ) {
 		}
 	}
 	if ( null === $template ) {
-		$template = cif_viewer_api_get( CIF_VIEWER_TEMPLATE_URL . rawurlencode( isset( $record['database_uuid'] ) ? $record['database_uuid'] : '' ), 'write' );
+		$template = cif_viewer_api_get( CIF_VIEWER_TEMPLATE_URL . rawurlencode( isset( $record['database_uuid'] ) ? $record['database_uuid'] : '' ) );
 	}
 	if ( is_wp_error( $template ) ) {
 		return $template;
@@ -592,7 +581,7 @@ function cif_viewer_field_files( $record, $field_uuid ) {
 	return array();
 }
 
-// Sends a write to the API with the write account's token and decodes the record it answers
+// Sends a write to the API with the account's token and decodes the record it answers
 // with, or returns a WP_Error that includes the start of ODR's reply.
 function cif_viewer_api_write( $url, $method, $headers, $body, $token, $token_source ) {
 	$args = array(
@@ -610,12 +599,12 @@ function cif_viewer_api_write( $url, $method, $headers, $body, $token, $token_so
 	$code = wp_remote_retrieve_response_code( $res );
 	$request = $method . ' ' . preg_replace( '#^.*/api/v4#', '', (string) wp_parse_url( $url, PHP_URL_PATH ) );
 	if ( 401 === $code ) {
-		delete_transient( cif_viewer_token_cache_key( 'write' ) );
+		delete_transient( 'cif_viewer_api_token_cache' );
 		return cif_viewer_rest_error( $request . ' failed: 401 - the API rejected the token.', 'token came from the ' . $token_source, 401 );
 	}
 	if ( 403 === $code ) {
 		// The login worked but the account may not do this (e.g. no edit rights on the database).
-		return cif_viewer_rest_error( $request . " failed: 403 - the symmetry_username account isn't allowed to do this.", substr( wp_remote_retrieve_body( $res ), 0, 300 ), 403 );
+		return cif_viewer_rest_error( $request . " failed: 403 - the API account isn't allowed to do this (it needs edit rights on AMCSD).", substr( wp_remote_retrieve_body( $res ), 0, 300 ), 403 );
 	}
 	if ( $code < 200 || $code >= 300 ) {
 		return cif_viewer_rest_error( 'Request failed: ' . $code . '.', substr( wp_remote_retrieve_body( $res ), 0, 300 ), 502 );
