@@ -108,13 +108,17 @@ node scripts/metrics.js path/to/amc path/to/cif > data/metrics.json
 
 The file isn't committed. Without it, the view asks you to choose it.
 
-The net charges are added to it afterwards, from the live database and with the
-mineral calc's own code ([odr-rruff-mineralcalc](https://github.com/nkromero/odr-rruff-mineralcalc),
-checked out next to this repo with its packages installed):
+The **Charge balance** tab doesn't need it: the net charges are their own file,
+`wordpress-plugin/odr-rruff-cifviewer/data/net_charge.json`, committed with the
+plugin and loaded by both the standalone page and WordPress. Without
+`metrics.json`, the view shows just that tab (every AMCSD structure in the file).
+The charges come from the live database, worked out with the mineral calc's own
+code ([odr-rruff-mineralcalc](https://github.com/nkromero/odr-rruff-mineralcalc),
+checked out next to this repo with its packages installed). To regenerate them:
 
 ```bash
 node scripts/amcsd_pull.js path/to/pull          # ~220 API requests, ~75 minutes
-node scripts/net_charge.mjs ../odr-rruff-mineralcalc path/to/pull data/metrics.json
+node scripts/net_charge.mjs ../odr-rruff-mineralcalc path/to/pull wordpress-plugin/odr-rruff-cifviewer/data/net_charge.json
 ```
 
 The pull logs in with the `.env` login and skips pages already saved; delete the

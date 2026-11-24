@@ -750,6 +750,8 @@ function cif_viewer_shortcode() {
 		'restNonce'      => wp_create_nonce( 'wp_rest' ),
 		// The metrics view's data (scripts/metrics.js), put in the plugin's data/ folder.
 		'metricsUrl'     => CIF_VIEWER_URL . 'data/metrics.json',
+		// The net charges for the metrics view's Charge balance tab (scripts/net_charge.mjs), committed.
+		'netChargeUrl'   => CIF_VIEWER_URL . 'data/net_charge.json',
 	);
 	wp_localize_script( 'cif-viewer-app', 'odrRruffCifViewer', $config );
 

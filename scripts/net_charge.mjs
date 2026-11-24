@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-// Adds each structure's net charge per formula unit to metrics.json, worked out with the
+// Writes every AMCSD structure's net charge per formula unit to its own file, which the
+// metrics view's Charge balance tab reads (committed with the plugin, so the histogram
+// needs nothing else), worked out with the
 // mineral calc's own code (odr-rruff-mineralcalc) from a scripts/amcsd_pull.js folder:
 //  - the pulled FormulaCalcElements table is loaded over the bundled one, as the page does;
 //  - with a linked IMA mineral, the record goes through mineralFromRecord and the page's
@@ -11,19 +13,20 @@
 // given, and other elements take whichever valence balances best. With no readable AMC
 // file, the record's Chemistry field is used, as the mineral calc does.
 //
-//   node scripts/net_charge.mjs path/to/odr-rruff-mineralcalc pullDir data/metrics.json
+//   node scripts/net_charge.mjs path/to/odr-rruff-mineralcalc pullDir wordpress-plugin/odr-rruff-cifviewer/data/net_charge.json
 //
-// Writes, per row: netCharge, chargeFormula, cationCharge (total positive charge),
-// chargeWithoutIma and nativeElement (true when so), or chargeSkipped (why there's none).
+// { generated, rows }, a row per record: id, name, then netCharge, chargeFormula,
+// cationCharge (total positive charge), chargeWithoutIma and nativeElement (true when so),
+// or chargeSkipped (why there's none).
 import { readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 
-const [ROOT, PULL, METRICS] = process.argv.slice(2);
-if (!ROOT || !PULL || !METRICS) {
-  console.error('Usage: node scripts/net_charge.mjs path/to/odr-rruff-mineralcalc pullDir data/metrics.json');
+const [ROOT, PULL, OUT] = process.argv.slice(2);
+if (!ROOT || !PULL || !OUT) {
+  console.error('Usage: node scripts/net_charge.mjs path/to/odr-rruff-mineralcalc pullDir out.json');
   process.exit(1);
 }
 const AMCSD_DB = 'bf04d8bf310bcf7a1126d2f042c6';
@@ -99,24 +102,21 @@ async function chargeOf(r) {
 
 const pages = join(PULL, 'amcsd');
 const records = readdirSync(pages).sort().flatMap(file => JSON.parse(readFileSync(join(pages, file), 'utf8')).records);
-const byId = new Map();
-for (const r of records) {
-  try {
-    byId.set(r.id, await chargeOf(r));
-  } catch (e) {
-    byId.set(r.id, { chargeSkipped: e.message });
-  }
-}
-
-const KEYS = ['netCharge', 'chargeFormula', 'cationCharge', 'chargeWithoutIma', 'nativeElement', 'chargeSkipped'];
-const metrics = JSON.parse(readFileSync(METRICS, 'utf8'));
+const rows = [];
 const counts = {};
-for (const row of metrics.rows) {
-  for (const k of KEYS) delete row[k];
-  Object.assign(row, byId.get(row.id) || { chargeSkipped: 'Not in the database pull' });
-  const kind = row.chargeSkipped ? 'not calculated' : row.nativeElement ? 'native element' : row.chargeWithoutIma ? 'without IMA formula' : 'with IMA formula';
+for (const r of records) {
+  let charge;
+  try {
+    charge = await chargeOf(r);
+  } catch (e) {
+    charge = { chargeSkipped: e.message };
+  }
+  rows.push({ id: r.id, name: r.name, ...charge });
+  const kind = charge.chargeSkipped ? 'not calculated' : charge.nativeElement ? 'native element' : charge.chargeWithoutIma ? 'without IMA formula' : 'with IMA formula';
   counts[kind] = (counts[kind] || 0) + 1;
 }
-metrics.chargeGenerated = new Date().toISOString();
-writeFileSync(METRICS, JSON.stringify(metrics));
+rows.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+// One row per line keeps diffs of the committed file readable.
+const lines = rows.map(row => JSON.stringify(row)).join(',\n');
+writeFileSync(OUT, `{"generated":${JSON.stringify(new Date().toISOString())},"rows":[\n${lines}\n]}\n`);
 console.error(counts);

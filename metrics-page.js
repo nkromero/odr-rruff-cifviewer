@@ -194,6 +194,7 @@ const COLUMNS = [
   { key: 'density', label: 'Density', cls: 'num', bad: r => r.densityMatch === false },
   { key: 'cifVsAmc', label: 'CIF vs AMC', bad: r => r.cifVsAmc && r.cifVsAmc !== 'same' },
   { key: 'netCharge', label: 'Net charge', cls: 'num', bad: r => has(r.netCharge) && Math.abs(r.netCharge) > BALANCED },
+  { key: 'chargeFormula', label: 'Charge formula', cls: 'formula' },
 ];
 // Every field, in order, for the detail view.
 const DETAIL_FIELDS = [
@@ -209,7 +210,10 @@ const DETAIL_FIELDS = [
 ];
 
 const PAGE_SIZE = 100;
-const state = { rows: [], filter: '', search: '', sort: null, desc: false, page: 0, tab: 0 };
+const state = { rows: [], charges: [], hasMetrics: false, columns: COLUMNS, filter: '', search: '', sort: null, desc: false, page: 0, tab: 0 };
+// Charge balance comes from the charge file, which ships with the plugin; the other groups
+// need metrics.json.
+const available = group => group.histogram || state.hasMetrics;
 const $ = id => document.getElementById(id);
 
 function count(id) {
@@ -225,7 +229,9 @@ function renderSummary() {
   const tabs = document.createElement('div');
   tabs.className = 'metricsTabs';
   tabs.setAttribute('role', 'tablist');
+  if (!available(GROUPS[state.tab])) state.tab = 0;
   GROUPS.forEach((group, i) => {
+    if (!available(group)) return;
     const tab = document.createElement('button');
     tab.type = 'button';
     tab.setAttribute('role', 'tab');
@@ -274,7 +280,7 @@ function renderSummary() {
 function renderFilterOptions() {
   const select = $('metricsFilter');
   select.innerHTML = '<option value="">All structures</option>';
-  for (const group of GROUPS) {
+  for (const group of GROUPS.filter(available)) {
     const og = document.createElement('optgroup');
     og.label = group.title;
     for (const m of group.metrics) og.appendChild(new Option(m.label, m.id));
@@ -298,7 +304,7 @@ function visibleRows() {
   const q = state.search.trim().toLowerCase();
   let rows = state.rows;
   if (state.filter) rows = rows.filter(filterOf(state.filter).test);
-  if (q) rows = rows.filter(r => [r.id, r.name, r.formula, r.amcsdFormula, r.sg].some(v => v && String(v).toLowerCase().includes(q)));
+  if (q) rows = rows.filter(r => [r.id, r.name, r.formula, r.amcsdFormula, r.sg, r.chargeFormula].some(v => v && String(v).toLowerCase().includes(q)));
   if (state.sort) {
     const k = state.sort, dir = state.desc ? -1 : 1;
     rows = [...rows].sort((a, b) => {
@@ -324,7 +330,7 @@ function renderTable() {
   const head = $('metricsTable').tHead;
   head.innerHTML = '';
   const hr = head.insertRow();
-  for (const col of COLUMNS) {
+  for (const col of state.columns) {
     const th = document.createElement('th');
     th.textContent = col.label + (state.sort === col.key ? (state.desc ? ' ▼' : ' ▲') : '');
     th.addEventListener('click', () => {
@@ -338,7 +344,7 @@ function renderTable() {
   body.innerHTML = '';
   for (const r of rows.slice(state.page * PAGE_SIZE, (state.page + 1) * PAGE_SIZE)) {
     const tr = body.insertRow();
-    for (const col of COLUMNS) {
+    for (const col of state.columns) {
       const td = tr.insertCell();
       td.textContent = fmt(r[col.key]);
       if (col.cls) td.className = col.cls;
@@ -372,11 +378,34 @@ function downloadCsv() {
   URL.revokeObjectURL(a.href);
 }
 
-function load(data) {
-  state.rows = data.rows || [];
-  $('metricsLoadPanel').hidden = true;
+const CHARGE_KEYS = ['netCharge', 'chargeFormula', 'cationCharge', 'chargeWithoutIma', 'nativeElement', 'chargeSkipped'];
+
+// The rows: metrics.json's (when there is one) with each structure's charge from the charge
+// file, plus the structures only the charge file has.
+function load(metrics) {
+  const charges = new Map(state.charges.map(c => [c.id, c]));
+  const rows = (metrics ? metrics.rows || [] : []).map(row => {
+    const merged = { ...row };
+    for (const k of CHARGE_KEYS) delete merged[k];
+    const charge = charges.get(row.id);
+    if (!charge) return { ...merged, chargeSkipped: 'Not in the net charge file' };
+    return { ...charge, ...merged, ...Object.fromEntries(CHARGE_KEYS.filter(k => k in charge).map(k => [k, charge[k]])) };
+  });
+  const inMetrics = new Set(rows.map(r => r.id));
+  state.rows = [...rows, ...[...charges.values()].filter(c => !inMetrics.has(c.id))];
+  state.hasMetrics = Boolean(metrics);
+  // Only the columns some row has a value for.
+  state.columns = COLUMNS.filter(col => col.key === 'id' || col.key === 'name' || state.rows.some(r => has(r[col.key])));
+  const panel = $('metricsLoadPanel');
+  panel.hidden = state.hasMetrics;
+  panel.querySelector('p').textContent = 'For the other metrics, choose a metrics.json file (see the README)';
+  $('metricsExplorer').after(panel);
   $('metricsExplorer').hidden = false;
-  $('metricsSource').textContent = `${state.rows.length.toLocaleString()} structures · generated ${new Date(data.generated).toLocaleString()}`;
+  const dates = [
+    state.chargesGenerated && `net charges from ${new Date(state.chargesGenerated).toLocaleDateString()}`,
+    metrics && metrics.generated && `metrics from ${new Date(metrics.generated).toLocaleDateString()}`,
+  ].filter(Boolean);
+  $('metricsSource').textContent = [`${state.rows.length.toLocaleString()} structures`, ...dates].join(' · ');
   renderSummary();
   renderFilterOptions();
   setFilter('');
@@ -393,18 +422,30 @@ $('metricsFile').addEventListener('change', async e => {
   if (file) load(JSON.parse(await file.text()));
 });
 
-// The data is about 9 MB, so it's only fetched the first time the view is opened. The
-// WordPress plugin passes its own URL for it (odrRruffCifViewer.metricsUrl).
+// Fetched the first time the view is opened: the net charges (data/net_charge.json, from
+// scripts/net_charge.mjs, committed with the plugin) and metrics.json (about 12 MB, not
+// committed; without it only Charge balance is shown). The WordPress plugin passes its own
+// URLs for them (odrRruffCifViewer.netChargeUrl and metricsUrl).
 let requested = false;
 function fetchData() {
   if (requested) return;
   requested = true;
   const config = window.odrRruffCifViewer || {};
   $('metricsSource').textContent = 'Loading…';
-  fetch(config.metricsUrl || 'data/metrics.json')
-    .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
-    .then(load)
-    .catch(() => { $('metricsSource').textContent = ''; $('metricsLoadPanel').hidden = false; });
+  const getJson = url => fetch(url).then(res => { if (!res.ok) throw new Error(res.status); return res.json(); });
+  Promise.all([
+    getJson(config.netChargeUrl || 'wordpress-plugin/odr-rruff-cifviewer/data/net_charge.json').catch(() => null),
+    getJson(config.metricsUrl || 'data/metrics.json').catch(() => null),
+  ]).then(([charges, metrics]) => {
+    if (!charges && !metrics) {
+      $('metricsSource').textContent = '';
+      $('metricsLoadPanel').hidden = false;
+      return;
+    }
+    state.charges = charges ? charges.rows || [] : [];
+    state.chargesGenerated = charges && charges.generated;
+    load(metrics);
+  });
 }
 
 function showView(metrics) {
