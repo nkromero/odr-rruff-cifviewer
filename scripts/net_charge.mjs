@@ -39,6 +39,7 @@ await build({
   stdin: {
     contents: `export { mineralFromRecord } from './src/mineralDataSources.js';
                export { amcValenceChemistry } from './src/amcChemistry.js';
+               export { unitCellFromAmc } from './src/amcsd/amcFile.js';
                export { buildIdealRows, buildEmpiricalRows, averageCitationAtoms } from './src/empiricalFormulaRows.js';
                export { ELEMENTS } from './src/elements.js';
                export { parseElementRecords } from './src/elementsLoader.js';`,
@@ -76,6 +77,22 @@ function citationWithoutIma(r) {
   };
 }
 
+// Why a record has no charge, as close to the cause as the AMC file shows; null when its AMC
+// file reads fine (then the calculator's own message is used).
+function whyNoCharge(r) {
+  if (!r.amc.trim()) return r.chemistry ? null : 'No AMC file and no Chemistry';
+  let atoms;
+  try {
+    atoms = M.unitCellFromAmc(r.amc)[0].atoms.length;
+  } catch (e) {
+    return `AMC file can't be read: ${e.message}`;
+  }
+  if (atoms) return null;
+  return /^\s*atom\s/im.test(r.amc)
+    ? 'AMC file has no atom rows that could be read'
+    : 'AMC file has no column header line (atom x y z ...), so no atoms were read';
+}
+
 async function chargeOf(r) {
   let name = r.name, ideal = '', citations;
   if (r.valenceFormula) ({ name, formulaStr: ideal, citations } = await M.mineralFromRecord(asRecord(r)));
@@ -109,7 +126,7 @@ for (const r of records) {
   try {
     charge = await chargeOf(r);
   } catch (e) {
-    charge = { chargeSkipped: e.message };
+    charge = { chargeSkipped: whyNoCharge(r) || e.message };
   }
   rows.push({ id: r.id, name: r.name, ...charge });
   const kind = charge.chargeSkipped ? 'not calculated' : charge.nativeElement ? 'native element' : charge.chargeWithoutIma ? 'without IMA formula' : 'with IMA formula';

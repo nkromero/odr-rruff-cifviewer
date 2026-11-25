@@ -328,3 +328,61 @@
   font-family: ui-monospace, Consolas, monospace;
   word-break: break-word;
 }
+
+/* The structures with no charge, under the Charge balance counts. */
+#metricsView .chargeFailed h3 {
+  font-size: 1rem;
+  margin: 1rem 0 0.4rem;
+}
+
+#metricsView .chargeFailedWrap {
+  max-height: 16rem;
+  overflow: auto;
+  background: var(--m-bg);
+  border: 1px solid var(--m-border);
+  border-radius: 10px;
+}
+
+#metricsView .chargeFailed table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+#metricsView .chargeFailed th,
+#metricsView .chargeFailed td {
+  text-align: left;
+  padding: 0.35rem 0.7rem;
+  border-bottom: 1px solid var(--m-border);
+}
+
+#metricsView .chargeFailed th {
+  position: sticky;
+  top: 0;
+  background: var(--m-bg);
+  color: var(--m-muted);
+  font-weight: 600;
+}
+
+#metricsView .chargeFailed tbody tr {
+  cursor: pointer;
+}
+
+#metricsView .chargeFailed tbody tr:hover {
+  background: var(--m-panel-bg);
+}
+
+#metricsView .chargeFailed th:first-child,
+#metricsView .chargeFailed td:first-child {
+  width: 1%;
+  white-space: nowrap;
+}
+
+#metricsView .chargeFailed td:nth-child(2) {
+  overflow-wrap: anywhere;
+}
+
+#metricsView .chargeFailed th:last-child,
+#metricsView .chargeFailed td:last-child {
+  min-width: 12rem;
+}

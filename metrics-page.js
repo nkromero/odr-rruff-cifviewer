@@ -29,7 +29,7 @@ const GROUPS = [
       { id: 'chargeWithIma', label: 'With an IMA formula', test: r => charged(r) && !r.chargeWithoutIma, of: 'chargeCalculated' },
       { id: 'chargeWithoutIma', label: 'Without an IMA formula', test: r => charged(r) && r.chargeWithoutIma === true, of: 'chargeCalculated', hint: 'No linked IMA mineral (mostly synthetic compounds): the cell is divided by its site-multiplicity gcd and valences have no IMA limits' },
       { id: 'chargeNative', label: 'Native elements', test: r => has(r.netCharge) && r.nativeElement === true, of: 'chargeAll', hint: 'Every element has only positive valences (metals, alloys, carbides like SiC), so the charge is never 0; not in the chart' },
-      { id: 'chargeOther', label: 'Not calculated', test: r => has(r.chargeSkipped), hint: 'No readable AMC file or Chemistry, or not in the database pull' },
+      { id: 'chargeOther', label: "Couldn't calculate", test: r => has(r.chargeSkipped), hint: 'Listed below the counts, each with the reason' },
     ],
   },
   {
@@ -272,9 +272,28 @@ function renderSummary() {
       card.addEventListener('click', () => { setFilter(m.id); $('metricsExplorer').scrollIntoView({ behavior: 'smooth' }); });
       cards.appendChild(card);
     }
+    if (group.histogram) section.appendChild(failedList());
     summary.appendChild(section);
   }
   summary.querySelectorAll('.card, .bin').forEach(c => c.classList.toggle('active', c.dataset.filter === state.filter));
+}
+
+// The structures with no charge, each with why, shown in full under the Charge balance
+// counts so they can be fixed. A row opens its details.
+function failedList() {
+  const failed = state.rows.filter(r => has(r.chargeSkipped));
+  const box = document.createElement('div');
+  box.className = 'chargeFailed';
+  if (!failed.length) return box;
+  box.innerHTML = `<h3></h3><div class="chargeFailedWrap"><table><thead><tr><th>ID</th><th>Name</th><th>Why</th></tr></thead><tbody></tbody></table></div>`;
+  box.querySelector('h3').textContent = `Couldn't calculate (${failed.length.toLocaleString()})`;
+  const body = box.querySelector('tbody');
+  for (const r of failed) {
+    const tr = body.insertRow();
+    for (const v of [r.id, r.name, r.chargeSkipped]) tr.insertCell().textContent = fmt(v);
+    tr.addEventListener('click', () => showDetail(r));
+  }
+  return box;
 }
 
 function renderFilterOptions() {
